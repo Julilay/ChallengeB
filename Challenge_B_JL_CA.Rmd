@@ -1,0 +1,335 @@
+---
+title: "Challenge B"
+author: "Julia Lohse & Cristina Artero"
+date: "7 December 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+install_load <- function (package1, ...)  {   
+
+   # converting arguments into vectors
+   packages <- c(package1, ...)
+
+   # loop in order to determine whether each package is installed
+   for(package in packages){
+
+       # if package installed locally, load
+       if(package %in% rownames(installed.packages()))
+          do.call('library', list(package))
+
+       # if package not installed locally, download, then load
+       else {
+          install.packages(package)
+          do.call("library", list(package))
+       }
+   } 
+}
+install_load("caret", 
+             "randomForest",
+             "tidyverse",
+             "np",
+             "reshape2",
+             "VIM",
+             "stargazer",
+             "xtable",
+             "stringr")
+```
+
+
+## Task 1B: Fitting a random forest to predict housing prices
+
+### Step 1
+
+Random Forest is a ML algorithm particularly effective in identifying links between explanatory variables and variables to be explained as it classifies the explanatory variables according to their links with the variable to be explained.
+
+### Step 2: Train the chosen technique on the training data
+
+We re-use the revised training data from challenge A and we train the model using the ML algorithm Random Forest. The recommended default is of 500 trees per forest and terminal nodes which size is 5 and the defaut value of m=p/3: this is what we will be using.
+
+```{r train_randomforest, cache=TRUE}
+training <- read.csv(file = "training_final_ChallengeA.csv", header = T)
+random_forest_model1 <- randomForest(data=training, SalePrice~.-Id, ntree = 500, nodesize = 5)
+```
+
+### Step 3: Make predictions on the test data, and compare them to the predictions of a linear regression of your choice.
+
+We us the trained model we presented before and we compare the found predictions to the predictions found with the revised test dataset from challenge A.
+
+```{r predictions_1B, cache=TRUE}
+test <- read.csv(file = "test_final_ChallengeA.csv", header = TRUE)
+rf_predictions <- predict(random_forest_model1, test)
+lar_predictions <- read.csv(file = "final_predictions_ChallengeA.csv", header = TRUE)
+compare_predictions <- cbind(lar_predictions,rf_predictions)
+```
+
+We plot the predictions against each other in order to compare them. According to the figure, the predictions are pretty close with r=0.88. Extreme observations in both estimations may explain why R-squared is not 1 as with these extreme observations both models predict lower or higher prices on average, as we are using the Least Angle Regression.
+
+```{r compare_predictions, results='asis', echo=FALSE, cache=TRUE}
+ggplot(data = compare_predictions) + 
+  geom_point(aes(x = log(SalePrice), y = log(rf_predictions)), alpha = 0.4) + # using logs of predicted sale prices
+  stat_function(fun = function(x) x) + # Plotting it against 45 degree line
+  geom_vline(xintercept=mean(log(compare_predictions$SalePrice)), color = "red") + #mean of Least Angle Regression predictions
+  geom_hline(yintercept=mean(log(compare_predictions$rf_predictions)), color = "red") + #mean of Random Forest predictions
+  labs(title="Comparing model predictions", 
+       x ="Least Angle Regression Predictions (in logs)", 
+       y = "Random Forest Predictions (in logs)") +
+  annotate("text", x = 13, y = 14,label = paste("r = ", round(cor(compare_predictions$SalePrice, compare_predictions$rf_predictions), digits = 2)), size = 6) +
+  annotate("text", x = 9.5, y = 9.7, angle = 32, label = "45?? line") +
+  annotate("text", x = 13.7, y = 12.2, label = "Mean of predictions")
+```
+
+
+## Task 2B - Overfitting in Machine Learning (continued) - 1 point for each step
+
+We create the data we need for this exercise in the following manner.
+
+```{r simulate_data, cache=TRUE}
+set.seed(1234)
+nsims <- 150 # Simulations
+e <- rnorm(n = nsims, mean = 0, sd = 1) # Draw 150 errors from a normal distribution
+x <- rnorm(n = nsims, mean = 0, sd = 1) # Draw 150 x obs. from a normal distribution 
+y <- x^3+e # generate y following (T)
+df <- data.frame(y,x)
+
+df$ID <- c(1:150)
+training2 <- df[df$ID %in% sample(df$ID, size = 120, replace = F), ] #training set, size 120
+test2 <- df[!(df$ID %in% training2$ID), ] # remaining test dataset
+df$training <- (df$ID %in% training2$ID) # Create variable specifying whether obs.
+```
+
+
+### Step 1: Estimate a low-flexibility local linear model on the training data
+
+```{r low_flex_ll, cache=TRUE}
+ll.fit.lowflex <- npreg(training2, formula = y ~ x, method = "ll", bws = 0.5)
+```
+
+### Step 2: Estimate a high-flexibility local linear model on the training data. 
+
+```{r high_flex_ll, cache=TRUE}
+ll.fit.highflex <- npreg(training2, formula = y ~ x, method = "ll", bws = 0.01)
+```
+
+### Step 3: Plot the scatterplot of x-y, along with the predictions of ll.fit.lowflex and ll.fit.highflex, on only the training data.
+
+```{r, cache=TRUE}
+# We get estimates of the two models for training2 data
+lowflex_estimates <- data.frame(y_estimates_lowflex = ll.fit.lowflex$mean, y = training2$y, x = ll.fit.lowflex$eval)
+highflex_estimates <- data.frame(y_estimates_highflex = ll.fit.highflex$mean, y = training2$y, x = ll.fit.highflex$eval)
+combined_estimates <- merge(lowflex_estimates, highflex_estimates)
+
+ggplot(data = combined_estimates) + geom_point(aes(x = x, y = y)) + 
+  geom_line(aes(x = x, y = y_estimates_lowflex, color = "red")) +
+  geom_line(aes(x = x, y = y_estimates_highflex, color = "darkblue")) +
+  stat_function(fun = function(x) x^3) + 
+  scale_color_discrete(name = "Local Linear Regression", labels = c("Highflex", "Lowflex"))
+```
+
+### Step 4 - Between the two models, which predictions are more variable? Which predictions have the least bias?
+
+According to the predictions on the training dataset, the high-flexibility local linear model has a better performance than the low-flexibility-model as to bias and variance is concerned. The high-flexbility model has a low bias as was expected since we only face a bias-variance trade-off when applying the model to the test data.
+
+```{r}
+```
+
+
+### Step 5 - Plot the scatterplot of x-y, along with the predictions of ll.fit.lowflex and ll.fit.highflex now using the test data. Which predictions are more variable? What happened to the bias of the least biased model?
+
+```{r, cache=TRUE}
+# Getting predictions of both models for test2 data
+lowflex_predictions <- predict(ll.fit.lowflex, newdata = test2)
+highflex_predictions <- predict(ll.fit.highflex, newdata = test2)
+combined_predictions <- cbind(test2, lowflex_predictions, highflex_predictions)
+
+ggplot(data = combined_predictions) + geom_point(aes(x = x, y = y)) + 
+  geom_line(aes(x = x, y = lowflex_predictions, color = "red")) + # Plotting predictions from low flexibility model
+  geom_line(aes(x = x, y = highflex_predictions, color = "darkblue")) + # Plotting predictions from high flexibility model
+  stat_function(fun = function(x) x^3) + 
+  scale_color_discrete(name = "Local Linear Regression", labels = c("Highflex", "Lowflex"))
+```
+
+Compare bias and variance.
+
+### Step 6 - Create a vector of bandwidth going from 0.01 to 0.5 with a step of 0.001
+
+```{r, cache=TRUE}
+bandwidth_vector <- seq(0.01,0.5,0.001)
+```
+
+### Step 7 - Estimate a local linear model y ~ x on the training data with each bandwidth.
+
+We have two options to do it: a loop or a vector. As said in class, doing a vector is much more efficient. Indeed, if we apply the same function to each of the vector's elements, then estimating with a vector is less time consuming.
+
+```{r, cache=TRUE}
+run_ll <- function(bandwidth){
+  npreg(training2, formula = y ~ x, method = "ll", bws = bandwidth)
+}
+ll_models <- lapply(X = bandwidth_vector, FUN = run_ll)
+```
+
+### Step 8 - Compute for each bandwidth the MSE on the training data.
+
+Now we extract the computed MSE from our previous model output. Vectorizing or looping take almost the same amount of time.
+
+```{r, cache=TRUE}
+MSE_training <- sapply(c(1:length(bandwidth_vector)), FUN = function(i) ll_models[[i]]$MSE)
+```
+
+### Step 9 - Compute for each bandwidth the MSE on the test data.
+
+```{r, cache=TRUE}
+MSE_test <- c() 
+for(i in 1:length(bandwidth_vector)){
+  ll_model_predictions <- predict(ll_models[[i]], newdata = test2) # Predicting for a given  bandwidth
+  MSE_test[i] <- mean((test2$y-ll_model_predictions)^2) # Compute MSE for a given bandwidth
+}
+```
+
+### Step 10 - Draw on the same plot how the MSE on training data, and test data, change when the bandwidth increases. Conclude.
+
+```{r, cache=TRUE}
+MSE <- data.frame(bandwidth = bandwidth_vector, MSE_training, MSE_test) # Combine in one dataset
+MSE_long <- melt(data = MSE, id.vars = c("bandwidth"), value.name = "MSE") # Long format
+ggplot() + 
+  geom_line(data = MSE_long, aes(x = bandwidth, y = MSE, group = variable, color = variable)) + 
+  scale_color_discrete(name = "Mean Squared Error", labels = c("Training","Test"))
+```
+
+
+## Task 3B - Privacy regulation compliance in France
+
+We use Sys.time to check the time that step 3B will take to run.
+
+### Step 1 
+First of all, we import the data set `CNIL.csv` which  lists all the companies that nominated a CIL.
+
+
+```{r time, include= FALSE}
+start_time <- Sys.time()
+```
+
+```{r Step 1 : Import the data, include=FALSE}
+CNILdata <- read.csv("CNIL.csv",sep = ';')
+
+```
+
+```{r View of the tabe}
+head(CNILdata)
+```
+
+### Step 2
+
+The following table indicates how many CIL were numerated per department.
+
+```{r Step 2 : number of CIL per department, include=FALSE}
+system.time(Department <- data.frame(Departement = CNILdata$Code_Postal)) #We are extracting the postal code column
+
+Department$Departement <- str_sub(Department$Departement, 1,2) #We only keep the first two digits which indicates the department number
+
+system.time(Q3.2 <- as.data.frame(table(Department))) #The table() function gives the number of organizations which nomanited a CIL.
+```
+
+```{r Step 2 : Correction for no informations about department, include =FALSE}
+colnames(Q3.2) <- c("Department","Number of organizations") 
+NoInfo <- as.data.frame(Q3.2[1,] + Q3.2[2,] + Q3.2[100,] + Q3.2[101,] + Q3.2[102,]+ Q3.2[103,] + 
+Q3.2[104,]+ Q3.2[105,]+ Q3.2[106,]+ Q3.2[107,]+ Q3.2[108,]+ Q3.2[109,])
+Q3.2 <- Q3.2[-c(1,2,100,101,102,103,104,105,106,107,108,109),]
+Q3.2 <- rbind(Q3.2, NoInfo)
+```
+
+```{r Step 2 : 2 tables in 1, include=FALSE}
+Q3.2 <- tbl_df(Q3.2)
+q1 <- print(Q3.2)[1:50,]
+q3 <- print(Q3.2)[51:98,]
+```
+
+Here is the first 50 departments
+```{r Step 2 : the first 50 departments, echo= FALSE}
+knitr::kable(list(q1, q3))
+```
+
+\newpage
+
+
+### Step 3
+
+First of all we are importing the dataset  `SIREN.csv`. We will only keep the first ten characters of the variable "date" which are year, month and day. We will then classify the data from the more recent to the oldest. After we will take off the duplicates: given that we sorted out the data we can delete all the duplicates that come next. Finally, we will merge the datasets by SIREN number and we will only have the informations about the companies which nominated a CIL.
+
+
+```{r Step 3 : Import the dataset SIREN, eval=FALSE}
+system.time(SIRENdata <- fread("SIREN.csv", sep = ';', header = TRUE))
+
+# (About 11 minutes to run this step).
+```
+
+```{r Step 3, eval=FALSE}
+
+# Here we have the most up to date information about each company: 
+
+SIRENdata$DATEMAJ <- str_sub(SIRENdata$DATEMAJ, 1,10)
+# only the first 10 characters of the variable "date" : year, month and day
+
+system.time(SIRENdata <- SIRENdata[ order(SIRENdata$DATEMAJ , decreasing = TRUE ),])
+#more recent data to the oldest
+
+SIRENdata <- subset(SIRENdata, !duplicated(SIRENdata[,1]))
+
+sum(duplicated(SIRENdata))
+
+system.time(DataCNILInfo2<-merge(x=CNILdata,y=SIRENdata,by.x ="Siren",by.y = "SIREN",all.x=TRUE, sort = FALSE))
+write.csv(DataCNILInfo2,file= "DataStep3.csv")
+
+# by.x et by.y because the names of variables are differents in the two datasets
+#Next we merge the datasets by SIREN number and now we have all the informations about only
+#the companies which nominated a CIL.
+
+```
+
+
+Data is saved as "DataStep3.csv"
+
+\newpage
+
+### Step 4 
+
+We take the size of companies from the dataset created in Step 3 in order to plot the histogram. We use the table to obtain the frequence.
+
+
+```{r Step 4 : Parameters}
+
+DataCNILInfo2 <- fread("DataStep3.csv", sep = ",", header = TRUE)
+
+size <- data.frame(size = DataCNILInfo2$LIBTEFET)
+#First we collect the number of salaries by company, this is the size of the organization.
+
+#We create a data frame
+size <- as.data.frame(table(size))
+colnames(Q3.2) <- c("Size","Number of organisations")
+size$Freq <-  as.numeric(size$Freq)
+```
+
+```{r step 4: histograme, include = FALSE}
+sizecompany=c(154,1204,924,1647,1945,2668,2714,1142,1060,307,839,582,400,250,75,180)
+names(sizecompany)=c("Unit??s non\n employeuses","0","1 ou 2","3-5","6-9","10- 19","20-49","50-99","100-199","200-249","250-499","500-999","1000-1999","2000-4999","5000-9999","10 000 et plus")
+
+#We set the parameters of the histogram
+par(mar = c(6, 6, 3, 2.5), mgp = c(4, 1, 0))
+```
+
+```{r Step 4 : Histogram, echo=FALSE, fig.cap="Size of the companies that nominated a CIL"}
+barplot(sizecompany,las=2, col = "blue",xlab="\n Size of the companies",cex.names = 0.8,ylab="Number of companies",ylim=c(0,3000))
+```
+
+According to the histogram, most companies that nominated a CIL have between 10 and 49 salaries. After this figure, the number of companies is decreasing in  size, which reminds us to a normal law.
+
+The time needed to run the Task 3 B is the following
+
+```{r  time to run the step3, echo=FALSE}
+end_time <- Sys.time()
+print("time to Knit the step3 on Rmd = ")
+end_time - start_time
+```
+
